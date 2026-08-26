@@ -14,9 +14,9 @@
     --panel-border:#1B2637;
     --text:#E8EDF5;
     --muted:#64768e;
-    --fresh:#F5E642;
-    --mid:#FF7A33;
-    --old:#8B6BFF;
+    --fresh:#F5E642;   /* couleur d'accent = thème choisi par l'utilisateur */
+    --mid:#FF7A33;      /* toujours orange = 5-30min, sémantique d'âge fixe */
+    --old:#8B6BFF;      /* toujours violet = >30min, sémantique d'âge fixe */
     --danger:#FF4D4D;
     --ok:#3ddc84;
   }
@@ -72,6 +72,13 @@
   }
   .window-toggle button.active{ background:var(--panel-border); color:var(--text); }
 
+  #gearBtn{
+    background:transparent; border:1px solid var(--panel-border); color:var(--muted);
+    width:30px; height:30px; border-radius:8px; cursor:pointer; font-size:14px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #gearBtn:hover{ color:var(--text); border-color:var(--fresh); }
+
   #nearest{
     top:76px; left:14px; width:230px;
     padding:16px;
@@ -83,6 +90,15 @@
   }
   #nearest .distance .unit{ font-size:16px; color:var(--muted); margin-left:4px;}
   #nearest .meta{ margin-top:8px; font-size:12px; color:var(--muted); }
+
+  #stats{
+    top:216px; left:14px; width:230px;
+    padding:14px 16px;
+  }
+  #stats .label{ font-size:11px; color:var(--muted); letter-spacing:0.08em; text-transform:uppercase; margin-bottom:8px;}
+  #stats .row{ display:flex; justify-content:space-between; font-size:12.5px; padding:4px 0; }
+  #stats .row .v{ font-weight:600; }
+  #stats .note{ font-size:10.5px; color:var(--muted); margin-top:8px; line-height:1.4; }
 
   #panel{
     top:76px; right:14px; bottom:14px; width:290px;
@@ -112,11 +128,50 @@
     padding:18px 16px; font-size:12.5px; color:var(--muted);
   }
 
+  /* Panneau réglages */
+  #settingsOverlay{
+    position:absolute; inset:0; z-index:20; background:#000a;
+    display:none; align-items:center; justify-content:center;
+  }
+  #settingsOverlay.open{ display:flex; }
+  #settingsPanel{
+    width:320px; max-width:90vw; max-height:85vh; overflow-y:auto;
+    background:#0D1420; border:1px solid var(--panel-border); border-radius:14px;
+    padding:20px;
+  }
+  #settingsPanel h3{
+    font-family:'Space Grotesk', sans-serif; margin:0 0 16px; font-size:16px;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  #settingsPanel .closeX{ cursor:pointer; color:var(--muted); font-size:18px; }
+  .setting-block{ margin-bottom:20px; }
+  .setting-block label{ font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:8px; }
+  .toggle-row{ display:flex; align-items:center; justify-content:space-between; }
+  .toggle-row button.switch{
+    width:44px; height:24px; border-radius:12px; border:1px solid var(--panel-border);
+    background:#182234; position:relative; cursor:pointer;
+  }
+  .toggle-row button.switch .knob{
+    position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
+    background:var(--muted); transition:all .15s ease;
+  }
+  .toggle-row button.switch.on{ background:var(--fresh); }
+  .toggle-row button.switch.on .knob{ left:22px; background:#06090f; }
+  input[type=range]{ width:100%; accent-color:var(--fresh); }
+  .range-value{ font-size:13px; color:var(--text); margin-top:4px; }
+  .theme-swatches{ display:flex; gap:10px; }
+  .theme-swatches button{
+    width:32px; height:32px; border-radius:50%; border:2px solid transparent; cursor:pointer;
+  }
+  .theme-swatches button.active{ border-color:#fff; }
+  .hint{ font-size:11px; color:var(--muted); margin-top:6px; line-height:1.4; }
+
   .leaflet-control-attribution{ font-size:9px; }
 
   @media (max-width: 720px){
-    #panel{ top:auto; height:38vh; left:14px; right:14px; width:auto; }
+    #panel{ top:auto; height:34vh; left:14px; right:14px; width:auto; }
     #nearest{ width:auto; right:14px; }
+    #stats{ display:none; }
   }
 </style>
 </head>
@@ -126,12 +181,13 @@
 
 <div id="topbar" class="hud">
   <div class="title"><span class="bolt">⚡</span> Éclair Live</div>
-  <div style="display:flex; align-items:center; gap:14px;">
+  <div style="display:flex; align-items:center; gap:10px;">
     <div class="window-toggle" id="windowToggle">
       <button data-h="1">1H</button>
       <button data-h="3" class="active">3H</button>
     </div>
     <div id="status"><span class="dot" id="statusDot"></span><span id="statusText">connexion…</span></div>
+    <button id="gearBtn" title="Réglages">⚙</button>
   </div>
 </div>
 
@@ -141,9 +197,48 @@
   <div class="meta" id="nearestMeta">en attente de position…</div>
 </div>
 
+<div id="stats" class="hud">
+  <div class="label" id="statsLabel">Stats — fenêtre 3h</div>
+  <div class="row"><span>Éclairs détectés</span><span class="v" id="statCount">—</span></div>
+  <div class="row"><span>Plus proche vu</span><span class="v" id="statNearest">—</span></div>
+  <div class="row"><span>Distance moyenne</span><span class="v" id="statAvg">—</span></div>
+  <div class="note">Basé sur ce que le serveur garde en mémoire (max ~3h30). Pas de vraies stats "depuis minuit" pour l'instant — ça demanderait une base de données permanente.</div>
+</div>
+
 <div id="panel" class="hud">
   <h2 id="panelTitle">Derniers impacts</h2>
   <div id="list"><div id="empty">Aucun éclair détecté pour l'instant dans la fenêtre choisie.</div></div>
+</div>
+
+<!-- Panneau réglages -->
+<div id="settingsOverlay">
+  <div id="settingsPanel">
+    <h3>Réglages <span class="closeX" id="closeSettings">✕</span></h3>
+
+    <div class="setting-block">
+      <label>Notifications</label>
+      <div class="toggle-row">
+        <span id="notifStatusText" style="font-size:12.5px;">désactivées</span>
+        <button class="switch" id="notifSwitch"><span class="knob"></span></button>
+      </div>
+      <div class="hint">Alerte quand un éclair tombe sous le seuil de distance choisi ci-dessous. Fonctionne tant que cet onglet est ouvert (même en arrière-plan sur la plupart des téléphones).</div>
+    </div>
+
+    <div class="setting-block">
+      <label>Seuil d'alerte : <span id="thresholdValue">20</span> km</label>
+      <input type="range" id="thresholdRange" min="2" max="100" value="20" step="1" />
+    </div>
+
+    <div class="setting-block">
+      <label>Couleur d'accent</label>
+      <div class="theme-swatches" id="themeSwatches">
+        <button data-color="#F5E642" style="background:#F5E642" class="active" title="Électrique"></button>
+        <button data-color="#3DDCFF" style="background:#3DDCFF" title="Cyan"></button>
+        <button data-color="#FF4D6A" style="background:#FF4D6A" title="Rouge alerte"></button>
+        <button data-color="#39FF88" style="background:#39FF88" title="Vert"></button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -157,8 +252,91 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
 
 let userPos = null;
 let hoursWindow = 3;
-const markers = new Map(); // key -> {marker, ts}
+const markers = new Map(); // key -> marker
+const notifiedKeys = new Set();
 
+// ---------- Réglages persistés ----------
+const settings = {
+  notifEnabled: localStorage.getItem('eclair_notif') === '1',
+  threshold: parseInt(localStorage.getItem('eclair_threshold') || '20', 10),
+  theme: localStorage.getItem('eclair_theme') || '#F5E642',
+};
+document.documentElement.style.setProperty('--fresh', settings.theme);
+document.getElementById('thresholdRange').value = settings.threshold;
+document.getElementById('thresholdValue').textContent = settings.threshold;
+document.querySelectorAll('.theme-swatches button').forEach(b=>{
+  b.classList.toggle('active', b.dataset.color.toLowerCase() === settings.theme.toLowerCase());
+});
+function refreshNotifSwitch(){
+  const on = settings.notifEnabled && Notification.permission === 'granted';
+  document.getElementById('notifSwitch').classList.toggle('on', on);
+  document.getElementById('notifStatusText').textContent = on ? 'activées' : 'désactivées';
+}
+refreshNotifSwitch();
+
+// ---------- Panneau réglages ----------
+document.getElementById('gearBtn').addEventListener('click', ()=> document.getElementById('settingsOverlay').classList.add('open'));
+document.getElementById('closeSettings').addEventListener('click', ()=> document.getElementById('settingsOverlay').classList.remove('open'));
+document.getElementById('settingsOverlay').addEventListener('click', e=>{
+  if (e.target.id === 'settingsOverlay') e.currentTarget.classList.remove('open');
+});
+
+document.getElementById('notifSwitch').addEventListener('click', async ()=>{
+  if (!settings.notifEnabled){
+    if (Notification.permission !== 'granted'){
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted'){ refreshNotifSwitch(); return; }
+    }
+    settings.notifEnabled = true;
+  } else {
+    settings.notifEnabled = false;
+  }
+  localStorage.setItem('eclair_notif', settings.notifEnabled ? '1' : '0');
+  refreshNotifSwitch();
+});
+
+document.getElementById('thresholdRange').addEventListener('input', e=>{
+  settings.threshold = parseInt(e.target.value, 10);
+  document.getElementById('thresholdValue').textContent = settings.threshold;
+  localStorage.setItem('eclair_threshold', settings.threshold);
+});
+
+document.getElementById('themeSwatches').addEventListener('click', e=>{
+  const btn = e.target.closest('button'); if(!btn) return;
+  const color = btn.dataset.color;
+  settings.theme = color;
+  localStorage.setItem('eclair_theme', color);
+  document.documentElement.style.setProperty('--fresh', color);
+  document.querySelectorAll('.theme-swatches button').forEach(b=> b.classList.toggle('active', b === btn));
+});
+
+function beep(){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine'; osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime + 0.35);
+  } catch(e){ /* audio non disponible, tant pis */ }
+}
+
+function maybeNotify(strike, key){
+  if (!settings.notifEnabled || Notification.permission !== 'granted') return;
+  if (strike.distance_km === undefined || strike.distance_km > settings.threshold) return;
+  if (strike.age_sec > 30) return; // uniquement les impacts vraiment tout frais
+  if (notifiedKeys.has(key)) return;
+  notifiedKeys.add(key);
+  beep();
+  new Notification('⚡ Éclair à ' + strike.distance_km.toFixed(1) + ' km', {
+    body: 'Impact détecté il y a ' + Math.round(strike.age_sec) + 's',
+    tag: key,
+  });
+}
+
+// ---------- Affichage ----------
 function ageBucketColor(ageSec){
   if (ageSec < 5*60) return getComputedStyle(document.documentElement).getPropertyValue('--fresh').trim();
   if (ageSec < 30*60) return getComputedStyle(document.documentElement).getPropertyValue('--mid').trim();
@@ -175,6 +353,10 @@ function fmtAge(ageSec){
   const h = Math.floor(ageSec/3600), m = Math.floor((ageSec%3600)/60);
   return `${h}h${m.toString().padStart(2,'0')}`;
 }
+function strikeKey(s){
+  const absTime = Math.round(Date.now()/1000 - s.age_sec); // horodatage stable entre deux polls
+  return s.lat.toFixed(4) + ',' + s.lon.toFixed(4) + ',' + absTime;
+}
 
 navigator.geolocation?.getCurrentPosition(
   pos => { userPos = { lat: pos.coords.latitude, lon: pos.coords.longitude }; map.setView([userPos.lat, userPos.lon], 8); },
@@ -188,6 +370,7 @@ document.getElementById('windowToggle').addEventListener('click', e=>{
   btn.classList.add('active');
   hoursWindow = parseFloat(btn.dataset.h);
   document.getElementById('panelTitle').textContent = `Impacts — ${hoursWindow}h`;
+  document.getElementById('statsLabel').textContent = `Stats — fenêtre ${hoursWindow}h`;
   refresh();
 });
 
@@ -210,8 +393,9 @@ function renderList(strikes){
 function renderMarkers(strikes){
   const seen = new Set();
   for (const s of strikes){
-    const key = s.lat.toFixed(4)+','+s.lon.toFixed(4)+','+Math.round(s.age_sec/5);
+    const key = strikeKey(s);
     seen.add(key);
+    maybeNotify(s, key);
     if (markers.has(key)) continue;
     const color = ageBucketColor(s.age_sec);
     const m = L.circleMarker([s.lat, s.lon], {
@@ -221,7 +405,6 @@ function renderMarkers(strikes){
     m.bindPopup(`il y a ${fmtAge(s.age_sec)}${s.distance_km!==undefined ? ' · '+s.distance_km.toFixed(1)+' km' : ''}`);
     markers.set(key, m);
   }
-  // nettoyage des marqueurs trop vieux (hors fenêtre)
   for (const [key, m] of markers){
     if (!seen.has(key)){ map.removeLayer(m); markers.delete(key); }
   }
@@ -241,6 +424,18 @@ function renderNearest(strikes){
   meta.textContent = `il y a ${fmtAge(nearest.age_sec)}`;
 }
 
+function renderStats(strikes){
+  document.getElementById('statCount').textContent = strikes.length;
+  if (userPos && strikes.length && strikes[0].distance_km !== undefined){
+    const dists = strikes.map(s=>s.distance_km);
+    document.getElementById('statNearest').textContent = Math.min(...dists).toFixed(1) + ' km';
+    document.getElementById('statAvg').textContent = (dists.reduce((a,b)=>a+b,0)/dists.length).toFixed(1) + ' km';
+  } else {
+    document.getElementById('statNearest').textContent = '—';
+    document.getElementById('statAvg').textContent = '—';
+  }
+}
+
 async function refresh(){
   try{
     const params = new URLSearchParams({ hours: hoursWindow, limit: 1000 });
@@ -250,6 +445,7 @@ async function refresh(){
     renderMarkers(data.strikes);
     renderList(data.strikes);
     renderNearest(data.strikes);
+    renderStats(data.strikes);
 
     const st = await (await fetch('/api/status')).json();
     document.getElementById('statusDot').classList.toggle('on', st.connected);
