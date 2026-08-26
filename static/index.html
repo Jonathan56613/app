@@ -72,6 +72,25 @@
   }
   .window-toggle button.active{ background:var(--panel-border); color:var(--text); }
 
+  #layerBar{
+    top:66px; left:14px; right:14px;
+    padding:10px 14px;
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  }
+  #layerBar .chip{
+    display:flex; align-items:center; gap:7px;
+    background:#0009; border:1px solid var(--panel-border); color:var(--muted);
+    font-family:'IBM Plex Mono', monospace; font-size:12px;
+    padding:7px 12px; border-radius:20px; cursor:pointer;
+  }
+  #layerBar .chip .swatch{ width:9px; height:9px; border-radius:50%; }
+  #layerBar .chip[data-layer="fresh"] .swatch{ background:var(--fresh); }
+  #layerBar .chip[data-layer="mid"] .swatch{ background:var(--mid); }
+  #layerBar .chip[data-layer="old"] .swatch{ background:var(--old); }
+  #layerBar .chip.active{ color:var(--text); border-color:currentColor; background:#ffffff12; }
+  #layerBar .hint{ font-size:11px; color:var(--muted); margin-left:auto; }
+  @media (max-width: 720px){ #layerBar .hint{ display:none; } }
+
   #gearBtn{
     background:transparent; border:1px solid var(--panel-border); color:var(--muted);
     width:30px; height:30px; border-radius:8px; cursor:pointer; font-size:14px;
@@ -80,7 +99,7 @@
   #gearBtn:hover{ color:var(--text); border-color:var(--fresh); }
 
   #nearest{
-    top:76px; left:14px; width:230px;
+    top:126px; left:14px; width:230px;
     padding:16px;
   }
   #nearest .label{ font-size:11px; color:var(--muted); letter-spacing:0.08em; text-transform:uppercase;}
@@ -92,7 +111,7 @@
   #nearest .meta{ margin-top:8px; font-size:12px; color:var(--muted); }
 
   #stats{
-    top:216px; left:14px; width:230px;
+    top:266px; left:14px; width:230px;
     padding:14px 16px;
   }
   #stats .label{ font-size:11px; color:var(--muted); letter-spacing:0.08em; text-transform:uppercase; margin-bottom:8px;}
@@ -101,7 +120,7 @@
   #stats .note{ font-size:10.5px; color:var(--muted); margin-top:8px; line-height:1.4; }
 
   #panel{
-    top:76px; right:14px; bottom:14px; width:290px;
+    top:126px; right:14px; bottom:14px; width:290px;
     display:flex; flex-direction:column; overflow:hidden;
   }
   #panel h2{
@@ -191,6 +210,13 @@
   </div>
 </div>
 
+<div id="layerBar" class="hud">
+  <button class="chip" data-layer="fresh"><span class="swatch"></span>Récents (&lt;5min)</button>
+  <button class="chip" data-layer="mid"><span class="swatch"></span>5-30min</button>
+  <button class="chip" data-layer="old"><span class="swatch"></span>30min-3h</button>
+  <span class="hint" id="layerHint">Choisis une période pour l'afficher sur la carte</span>
+</div>
+
 <div id="nearest" class="hud">
   <div class="label">Éclair le plus proche</div>
   <div class="distance" id="nearestDistance">—<span class="unit">km</span></div>
@@ -252,8 +278,25 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
 
 let userPos = null;
 let hoursWindow = 3;
-const markers = new Map(); // key -> marker
+let lastStrikes = [];
+const markers = new Map(); // key -> {hit, dot}
 const notifiedKeys = new Set();
+const activeLayers = { fresh:false, mid:false, old:false }; // rien affiché au départ
+
+function bucketOf(ageSec){
+  if (ageSec < 5*60) return 'fresh';
+  if (ageSec < 30*60) return 'mid';
+  return 'old';
+}
+
+document.getElementById('layerBar').addEventListener('click', e=>{
+  const chip = e.target.closest('.chip'); if(!chip) return;
+  const key = chip.dataset.layer;
+  activeLayers[key] = !activeLayers[key];
+  chip.classList.toggle('active', activeLayers[key]);
+  document.getElementById('layerHint').style.display = Object.values(activeLayers).some(Boolean) ? 'none' : '';
+  renderMarkers(lastStrikes);
+});
 
 // ---------- Réglages persistés ----------
 const settings = {
@@ -394,19 +437,38 @@ function renderMarkers(strikes){
   const seen = new Set();
   for (const s of strikes){
     const key = strikeKey(s);
+    maybeNotify(s, key); // les notifs restent indépendantes des filtres affichés
+
+    const bucket = bucketOf(s.age_sec);
+    if (!activeLayers[bucket]){
+      // pas dans une couche active : on s'assure qu'il n'est pas affiché
+      if (markers.has(key)){ const old = markers.get(key); map.removeLayer(old.hit); map.removeLayer(old.dot); markers.delete(key); }
+      continue;
+    }
     seen.add(key);
-    maybeNotify(s, key);
     if (markers.has(key)) continue;
+
     const color = ageBucketColor(s.age_sec);
-    const m = L.circleMarker([s.lat, s.lon], {
-      radius: s.age_sec < 300 ? 7 : 4,
-      color, fillColor: color, fillOpacity: 0.85, weight: s.age_sec < 300 ? 2 : 1, opacity:0.9
+    const popupHtml = `il y a ${fmtAge(s.age_sec)}${s.distance_km!==undefined ? ' · '+s.distance_km.toFixed(1)+' km' : ''}`;
+
+    // grande zone invisible = ce qu'on touche réellement (plus facile sur mobile)
+    const hit = L.circleMarker([s.lat, s.lon], {
+      radius: s.age_sec < 300 ? 20 : 16,
+      stroke:false, fillOpacity:0.02, fillColor:'#ffffff', interactive:true
     }).addTo(map);
-    m.bindPopup(`il y a ${fmtAge(s.age_sec)}${s.distance_km!==undefined ? ' · '+s.distance_km.toFixed(1)+' km' : ''}`);
-    markers.set(key, m);
+    hit.bindPopup(popupHtml);
+
+    // petit point visible, purement décoratif, ne capte pas les clics
+    const dot = L.circleMarker([s.lat, s.lon], {
+      radius: s.age_sec < 300 ? 7 : 4,
+      color, fillColor: color, fillOpacity: 0.85, weight: s.age_sec < 300 ? 2 : 1, opacity:0.9,
+      interactive:false
+    }).addTo(map);
+
+    markers.set(key, { hit, dot });
   }
-  for (const [key, m] of markers){
-    if (!seen.has(key)){ map.removeLayer(m); markers.delete(key); }
+  for (const [key, pair] of markers){
+    if (!seen.has(key)){ map.removeLayer(pair.hit); map.removeLayer(pair.dot); markers.delete(key); }
   }
 }
 
@@ -442,6 +504,7 @@ async function refresh(){
     if (userPos){ params.set('lat', userPos.lat); params.set('lon', userPos.lon); }
     const res = await fetch('/api/strikes?' + params.toString());
     const data = await res.json();
+    lastStrikes = data.strikes;
     renderMarkers(data.strikes);
     renderList(data.strikes);
     renderNearest(data.strikes);
